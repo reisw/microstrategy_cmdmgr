@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This procedure is used to update the security filters that pertain to specific GFE users with Merch Div security restrictions. The procedure will insert a security filter for a user if they are missing one. If a user already has a security filter it will compare the last time it was updated with the last time the users security was modified in GFE and update it accordingly. If there have been no updates in GFE then the security filter is not changed.</DESCRIPTION>
+<CODE>//GFE Group in MSTR&#13;
+String sGroup = sUserGroup;&#13;
+&#13;
+String sMemberLogin;&#13;
+String sMerchDivList = "";&#13;
+boolean bMemberIsgroup;&#13;
+String sFolder = sSecFilterFolder;&#13;
+&#13;
+//String for List Login and NTLINK&#13;
+String sListGroupMembers = "LIST MEMBERS FOR USER GROUP \"&lt;USER_GROUP&gt;\";";&#13;
+//String for security filters&#13;
+String sListSecFilters = "LIST ALL SECURITY FILTERS FOLDER \"&lt;FOLDER_PATH&gt;\" FOR PROJECT \"&lt;PROJECT&gt;\";";&#13;
+//String for listing properties of security filters&#13;
+String sListSecFilterProp = "GET PROPERTIES NAME, MODIFICATIONTIME FROM SECFILTER  \"&lt;SEC_FILTER&gt;\" IN FOLDER \"&lt;FOLDER_PATH&gt;\" FOR PROJECT \"&lt;PROJECT&gt;\";";&#13;
+//String for Creating security filters&#13;
+String sCreateSecFilters = "CREATE SECURITY FILTER \"&lt;USER_ID&gt;\" DESCRIPTION \"GFE_MERCH_DIV_&lt;USER_ID&gt;\" FOLDER \"&lt;FOLDER_PATH&gt;\" IN PROJECT \"&lt;PROJECT&gt;\" EXPRESSION \"[MERCH DIV]@ID IN (&lt;MERCH_DIV_VALUES&gt;)\";";&#13;
+//String for Altering security filters&#13;
+String sAlterSecFilters = "ALTER SECURITY FILTER \"&lt;USER_ID&gt;\" DESCRIPTION \"GFE_MERCH_DIV_&lt;USER_ID&gt;\" FOLDER \"&lt;FOLDER_PATH&gt;\" IN PROJECT \"&lt;PROJECT&gt;\" EXPRESSION \"[MERCH DIV]@ID IN (&lt;MERCH_DIV_VALUES&gt;)\";";&#13;
+//String for Assigning security filters&#13;
+String sAssignSecFilters = "APPLY SECURITY FILTER \"&lt;USER_ID&gt;\" FOLDER \"&lt;FOLDER_PATH&gt;\" TO USER \"&lt;USER_ID&gt;\" FOR PROJECT \"&lt;PROJECT&gt;\";";&#13;
+&#13;
+//**************************************************************************************&#13;
+//DATABASE CONNECTION PARAMETERS&#13;
+//CLASSPATH IN PROCEDURE MUST POINT TO LOCATION OF NZJDBC.jar file&#13;
+//**************************************************************************************&#13;
+String driverName = "org.netezza.Driver";&#13;
+&#13;
+String connectionURL = "jdbc:netezza://&lt;DBSERVER&gt;.poloralphlauren.com:5480/&lt;DATABASE&gt;";&#13;
+	connectionURL = connectionURL.replace("&lt;DATABASE&gt;", sDatabase);&#13;
+	connectionURL = connectionURL.replace("&lt;DBSERVER&gt;", sDbServer);&#13;
+&#13;
+//Database Login and password&#13;
+String login = sDbLogin;&#13;
+String password = sDbPassword;&#13;
+&#13;
+//Query to return user and max modification date who have security mapping&#13;
+String dbQueryGfeModDate = "SELECT A.MUAC_USER_ID ,MAX(A.MUAC_MODIFIED_BY_DATE) FROM MAS_USER_ACCESS_V A JOIN MERCH_DIV_V B on A.MUAC_ACCESS_PARM2 = B.MERCH_DIV_ID where A.MUAC_ACCESS_PARM1 = 'MERCH_DIV' AND A.MUAC_USER_ID = UPPER('&lt;USER_ID&gt;') GROUP BY A.MUAC_USER_ID";&#13;
+//Query to return user and Merch Div security mapping&#13;
+String dbQueryGfeMerchDiv = "SELECT A.MUAC_USER_ID,B.MERCH_DIV_ID,B.MERCH_DIV_DESC FROM MAS_USER_ACCESS_V A JOIN MERCH_DIV_V B on A.MUAC_ACCESS_PARM2 = B.MERCH_DIV_ID where A.MUAC_ACCESS_PARM1 = 'MERCH_DIV' AND A.MUAC_ACCESS_STATUS = 'ACTIVE' AND A.MUAC_USER_ID = UPPER('&lt;USER_ID&gt;') ORDER BY 2";&#13;
+&#13;
+//*************************************************************************************&#13;
+//                   					&#13;
+//*************************************************************************************&#13;
+//LOAD ALL USERS FROM GROUP INTO ARRAYLIST&#13;
+//*************************************************************************************&#13;
+//Define an arraylist and load the everyone group&#13;
+ArrayList alMembers = new ArrayList();&#13;
+try {&#13;
+	//Replace place holder with User Group input string&#13;
+	String sListGroupMembersNew = sListGroupMembers.replace("&lt;USER_GROUP&gt;", sGroup);&#13;
+	//Capture resultset of users returned&#13;
+	ResultSet oResultSetMembers = executeCapture(sListGroupMembersNew);&#13;
+	oResultSetMembers.moveFirst();&#13;
+	while (!oResultSetMembers.isEof()) {&#13;
+		//Populate resultset object with results&#13;
+		ResultSet oMemberDetail = (ResultSet) oResultSetMembers.getFieldValue(DisplayPropertyEnum.MEMBER_RESULTSET);&#13;
+		//Loop through all users and populate an array&#13;
+		oMemberDetail.moveFirst();&#13;
+		while (!oMemberDetail.isEof()) {&#13;
+			//String sLogin = oMemberDetail.getFieldValueString(LOGIN).toUpperCase();&#13;
+			String sLogin = oMemberDetail.getFieldValueString(LOGIN);&#13;
+			//Add user to array&#13;
+			alMembers.add(sLogin);&#13;
+			oMemberDetail.moveNext();&#13;
+		}&#13;
+		oResultSetMembers.moveNext();&#13;
+	}&#13;
+} catch (Exception e) {&#13;
+	printErr(e.getMessage());&#13;
+}&#13;
+//*************************************************************************************&#13;
+//LOAD ALL SECURITY FILTERS FROM FOLDER INTO HASHTABLE WITH MODIFICATION TIME&#13;
+//*************************************************************************************&#13;
+String sListSecFiltersNew = sListSecFilters.replace("&lt;FOLDER_PATH&gt;", sFolder);&#13;
+sListSecFiltersNew = sListSecFiltersNew.replace("&lt;PROJECT&gt;", sProject);&#13;
+//Create HashTable to hold Security Filters and Modification Date&#13;
+Hashtable SecFiltProps = new Hashtable();&#13;
+try {&#13;
+	//Capture resultset of users returned - Returns list of Security Filters&#13;
+	ResultSet oResultSetMembers = executeCapture(sListSecFiltersNew);&#13;
+	oResultSetMembers.moveFirst();&#13;
+	while (!oResultSetMembers.isEof()) {&#13;
+		//Assign Security Filter Name&#13;
+		String sSecFiltName = oResultSetMembers.getFieldValueString(NAME);&#13;
+		//Build string to run command to get properties of Security Filters, specifically the modification time&#13;
+		String sListSecFilterPropNew = sListSecFilterProp.replace("&lt;SEC_FILTER&gt;", sSecFiltName);&#13;
+		sListSecFilterPropNew = sListSecFilterPropNew.replace("&lt;FOLDER_PATH&gt;", sFolder);&#13;
+		sListSecFilterPropNew = sListSecFilterPropNew.replace("&lt;PROJECT&gt;", sProject);&#13;
+		//Load resultset with returned record(s) of Security Filter properties&#13;
+		ResultSet oResultSetSecProp = executeCapture(sListSecFilterPropNew);&#13;
+		oResultSetSecProp.moveFirst();&#13;
+		while (!oResultSetSecProp.isEof()) {&#13;
+			//Assign Modification Time to variable specifying that it is date format&#13;
+			Date sSecFiltModTime = (Date) oResultSetSecProp.getFieldValue(MODIFICATION_TIME);&#13;
+			//Load hashtable with the security filter name as the key and the modification time as the value&#13;
+			SecFiltProps.put(sSecFiltName, sSecFiltModTime);&#13;
+			oResultSetSecProp.moveNext();&#13;
+		}&#13;
+		oResultSetMembers.moveNext();&#13;
+	}&#13;
+&#13;
+} catch (Exception e) {&#13;
+	printErr(e.getMessage());&#13;
+}&#13;
+//**************************************************************************************&#13;
+// MAIN PROCESS - ITERATE THROUGH ARRAYLIST AND CHECK FOR SECURITY FILTERS&#13;
+//**************************************************************************************&#13;
+try {&#13;
+	Iterator alMembersItr = alMembers.iterator();&#13;
+&#13;
+	while (alMembersItr.hasNext()) {&#13;
+&#13;
+		String sMember = (String) alMembersItr.next();&#13;
+		//Check if there is already a security filter created for this user&#13;
+		if (SecFiltProps.containsKey(sMember)) {&#13;
+&#13;
+			Date SecFiltModDate = (Date) SecFiltProps.get(sMember);&#13;
+			//printOut(sMember + " : " + SecFiltModDate);&#13;
+			//load jdbc driver here&#13;
+			Class.forName(driverName).newInstance();&#13;
+			//use jdbc url, database login, and database password to create connection&#13;
+			//Create connection to database&#13;
+			java.sql.Connection conn = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+			//Statement for query against DB&#13;
+			java.sql.Statement stmt = conn.createStatement();&#13;
+			String dbQueryGfeModDateNew = dbQueryGfeModDate.replace("&lt;USER_ID&gt;", sMember);&#13;
+			//Resultset returned from query&#13;
+			java.sql.ResultSet memberGfeModDate = stmt.executeQuery(dbQueryGfeModDateNew);&#13;
+			//Move to first record from result. If there is no record returned it will fall to else statement&#13;
+			if (memberGfeModDate.next()) {&#13;
+				Date sGfeModDate = memberGfeModDate.getDate(2);&#13;
+				if (sGfeModDate.after(SecFiltModDate)) {&#13;
+					printOut("DB Mod Date is after Sec Filter Mod Date");&#13;
+					//UPDATE SECURITY FILTER&#13;
+					//**************************************************************************************&#13;
+					//load jdbc driver here&#13;
+					Class.forName(driverName).newInstance();&#13;
+					//use jdbc url, database login, and database password to create connection&#13;
+					//Create connection to database&#13;
+					java.sql.Connection conn2 = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+					//Statement for query against DB&#13;
+					java.sql.Statement stmt2 = conn.createStatement();&#13;
+					String dbQueryGfeMerchDivNew = dbQueryGfeMerchDiv.replace("&lt;USER_ID&gt;", sMember);&#13;
+					//Resultset returned from query&#13;
+					java.sql.ResultSet memberMerchDiv = stmt.executeQuery(dbQueryGfeMerchDivNew);&#13;
+					//Move to first record from result. If there is no record returned it will fall to else statement	&#13;
+					if (memberMerchDiv.next()) {&#13;
+						sMerchDivList = memberMerchDiv.getString(2);&#13;
+						//String MuacMerchDiv = memberMerchDiv.getString(2);&#13;
+						while (memberMerchDiv.next()) {&#13;
+							//Assign returned values to variables. These are then used when calling the stored procedure.&#13;
+							String MuacMerchDiv = memberMerchDiv.getString(2);&#13;
+							sMerchDivList = sMerchDivList + "," + MuacMerchDiv;&#13;
+							&#13;
+						}&#13;
+					}printOut("MODIFICATION DATE IS DIFFERENT " + sMerchDivList);&#13;
+					stmt2.close();&#13;
+					conn2.close();&#13;
+					//**************************************************************************************&#13;
+					//ALTER SECURITY FILTER&#13;
+					String sAlterSecFiltersNew = sAlterSecFilters.replace("&lt;USER_ID&gt;", sMember);&#13;
+					sAlterSecFiltersNew = sAlterSecFiltersNew.replace("&lt;FOLDER_PATH&gt;", sSecFilterFolder);&#13;
+					sAlterSecFiltersNew = sAlterSecFiltersNew.replace("&lt;PROJECT&gt;", sProject);&#13;
+					sAlterSecFiltersNew = sAlterSecFiltersNew.replace("&lt;MERCH_DIV_VALUES&gt;", sMerchDivList);&#13;
+					//printOut(sAlterSecFiltersNew);&#13;
+					execute(sAlterSecFiltersNew);&#13;
+				} else {&#13;
+					//printOut("DB Mod Date is Before Sec Filter Mod Date");&#13;
+				}&#13;
+			} else {&#13;
+				printOut("No Records found");&#13;
+			}&#13;
+			stmt.close();&#13;
+			conn.close();&#13;
+&#13;
+&#13;
+		} else {&#13;
+			//There was no security filter for this user so one will be created&#13;
+			//printOut(sMember + " : VALUE NOT FOUND");&#13;
+			//load jdbc driver here&#13;
+			Class.forName(driverName).newInstance();&#13;
+			//use jdbc url, database login, and database password to create connection&#13;
+			//Create connection to database&#13;
+			java.sql.Connection conn = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+			//Statement for query against DB&#13;
+			java.sql.Statement stmt = conn.createStatement();&#13;
+			String dbQueryGfeMerchDivNew = dbQueryGfeMerchDiv.replace("&lt;USER_ID&gt;", sMember);&#13;
+			//Resultset returned from query&#13;
+			java.sql.ResultSet memberMerchDiv = stmt.executeQuery(dbQueryGfeMerchDivNew);&#13;
+			//Move to first record from result. If there is no record returned it will fall to else statement	&#13;
+			if (memberMerchDiv.next()) {&#13;
+				sMerchDivList = memberMerchDiv.getString(2);&#13;
+				//String MuacMerchDiv = memberMerchDiv.getString(2);&#13;
+				while (memberMerchDiv.next()) {&#13;
+					//Assign returned values to variables. These are then used when calling the stored procedure.&#13;
+					String MuacMerchDiv = memberMerchDiv.getString(2);&#13;
+					sMerchDivList = sMerchDivList + "," + MuacMerchDiv;&#13;
+				}&#13;
+				//CREATE SECURITY FILTER&#13;
+				String sCreateSecFiltersNew = sCreateSecFilters.replace("&lt;USER_ID&gt;", sMember);&#13;
+				sCreateSecFiltersNew = sCreateSecFiltersNew.replace("&lt;FOLDER_PATH&gt;", sSecFilterFolder);&#13;
+				sCreateSecFiltersNew = sCreateSecFiltersNew.replace("&lt;PROJECT&gt;", sProject);&#13;
+				sCreateSecFiltersNew = sCreateSecFiltersNew.replace("&lt;MERCH_DIV_VALUES&gt;", sMerchDivList);&#13;
+				//printOut(sCreateSecFiltersNew);&#13;
+				execute(sCreateSecFiltersNew);&#13;
+				//ASSIGN SECURITY FILTER&#13;
+				String sAssignSecFiltersNew = sAssignSecFilters.replace("&lt;USER_ID&gt;", sMember);&#13;
+				sAssignSecFiltersNew = sAssignSecFiltersNew.replace("&lt;FOLDER_PATH&gt;", sSecFilterFolder);&#13;
+				sAssignSecFiltersNew = sAssignSecFiltersNew.replace("&lt;PROJECT&gt;", sProject);&#13;
+				//printOut(sAssignSecFiltersNew);&#13;
+				execute(sAssignSecFiltersNew);&#13;
+			} else {&#13;
+				printOut("No Records Found");&#13;
+			}&#13;
+			stmt.close();&#13;
+			conn.close();&#13;
+		}&#13;
+	}&#13;
+} catch (Exception e) {&#13;
+	printErr(e.getMessage());&#13;
+}</CODE>
+<SAMPLE>EXECUTE PROCEDURE GFE_MSTRSECFILT_INS_UPD_DEL ("DBLOGIN","PWD","DATABASE","DBSERVER","MSTR_PROJECT","USER_GROUP","\Project Objects\MD Security Filters\SecFilterFolder");</SAMPLE>
+<VERSION>1.0</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS>
+<INPUT INPUT_TYPE="STRING">sDbLogin</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbPassword</INPUT>
+<INPUT INPUT_TYPE="STRING">sDatabase</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbServer</INPUT>
+<INPUT INPUT_TYPE="STRING">sProject</INPUT>
+<INPUT INPUT_TYPE="STRING">sUserGroup</INPUT>
+<INPUT INPUT_TYPE="STRING">sSecFilterFolder</INPUT>
+</INPUT_PARAMS>
+<CLASSPATH>
+<CLASSPATH_ITEM>C:\JDBC\nzjdbc.jar</CLASSPATH_ITEM>
+</CLASSPATH>
+<TEST_INPUT>
+<TEST_INPUT_PARAM>DB Login</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>DB Password</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>Database</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>DB Server</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>Project</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>User Group</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>\Project Objects\MD Security Filters\SecFilterFolder</TEST_INPUT_PARAM>
+</TEST_INPUT>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>QATSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>

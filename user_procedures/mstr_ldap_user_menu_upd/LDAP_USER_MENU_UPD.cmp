@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This procedure pulls all users from the user group parameter that is passed and then updates the MBLSEC_USR table. It adds users if they don't exist or updates their information if they do. This table is used to manage the menus that are used on all mobile apps. The everyone group can be used but it will create all users that are defined in MicroStrategy even if they will not have a need for mobile access.</DESCRIPTION>
+<CODE>//*************************************************************************************&#13;
+//String sGroup = "LDAP Users";&#13;
+//String sGroup = "_XX_TESTGROUP";&#13;
+//Assign parameter passed from procedure call&#13;
+String sGroup = sUserGroup;&#13;
+&#13;
+&#13;
+//The following strings are used to hold the values returned from the execution of the "List Members ..." command&#13;
+String sMemberLogin;&#13;
+String sMemberFullName;&#13;
+String sMemberModificationTime;&#13;
+boolean bMemberEnabled;&#13;
+boolean bMemberIsgroup;&#13;
+Integer iMemberEnabled;&#13;
+//**************************************************************************************&#13;
+//DATABASE CONNECTION PARAMETERS&#13;
+//CLASSPATH IN PROCEDURE MUST POINT TO LOCATION OF NZJDBC.jar file&#13;
+String driverName = "org.netezza.Driver";&#13;
+String connectionURL = "jdbc:netezza://&lt;DBSERVER&gt;.companyname.com:5480/&lt;DATABASE&gt;";&#13;
+	connectionURL = connectionURL.replace("&lt;DATABASE&gt;", sDatabase);&#13;
+	connectionURL = connectionURL.replace("&lt;DBSERVER&gt;", sDbServer);&#13;
+//String login = "dblogin_id";&#13;
+String login = sDbLogin;&#13;
+//String password = "db_password";&#13;
+String password = sDbPassword;&#13;
+String userUpdateLogin = "CMDMGR_PROCEDURE";&#13;
+&#13;
+//Stored Procedure to call&#13;
+String dbStoredProc = "{CALL MBLSEC_USR_INS_UPD_DEL (?,?,?,?,?,?,?)}";&#13;
+&#13;
+//Query to return user details from MBLSEC_USR table&#13;
+String dbQuery = "SELECT USER_ID,USER_LGN_TXT, USER_NM_TXT, CREATE_TS, UPDATE_TS, CREATED_BY_USER, UPDATED_BY_USER, MSTR_MODIFICATION_TIME,MSTR_ENABLED_IND FROM MBLSEC_USR WHERE USER_LGN_TXT = ";&#13;
+&#13;
+//*************************************************************************************&#13;
+&#13;
+&#13;
+//Return resultset of member in group&#13;
+ResultSet oResultSetMembers = executeCapture("LIST MEMBERS FOR USER GROUP '" + sGroup + "';");&#13;
+&#13;
+oResultSetMembers.moveFirst();&#13;
+&#13;
+//Check if there are any results returned&#13;
+if (oResultSetMembers.getRowCount() &gt; 0) {&#13;
+&#13;
+	//Populate resultset object with results&#13;
+	ResultSet oMemberDetail = (ResultSet) oResultSetMembers.getFieldValue(DisplayPropertyEnum.MEMBER_RESULTSET);&#13;
+	//printOut("-- NUMBER OF MEMBERS = " + oMemberDetail.getRowCount());&#13;
+&#13;
+	//*********************************************************************************************&#13;
+	//Begin main process&#13;
+	try {&#13;
+		//load jdbc driver here&#13;
+		Class.forName(driverName).newInstance();&#13;
+&#13;
+		//use jdbc url, database login, and database password to create connection&#13;
+		//Create connection to database&#13;
+		java.sql.Connection conn = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+		//*********************************************************************************************&#13;
+&#13;
+		//Move to first records in user resultset&#13;
+		oMemberDetail.moveFirst();&#13;
+&#13;
+		//Process until all users have been iterated through&#13;
+		while (!oMemberDetail.isEof()) {&#13;
+&#13;
+			//Assign IS_GROUP Flag&#13;
+			bMemberIsgroup = (Boolean) oMemberDetail.getFieldValue(IS_GROUP);&#13;
+&#13;
+			//Only process users&#13;
+			if (!bMemberIsgroup) {&#13;
+				//Assign values from resultset to variables&#13;
+				sMemberLogin = oMemberDetail.getFieldValueString(LOGIN);&#13;
+				sMemberFullName = oMemberDetail.getFieldValueString(FULL_NAME);&#13;
+				sMemberModificationTime = oMemberDetail.getFieldValueString(MODIFICATION_TIME);&#13;
+				bMemberEnabled = (Boolean) oMemberDetail.getFieldValue(ENABLED);&#13;
+				&#13;
+				//If enabled is true then assign 1 to integer MSTR enabled variable&#13;
+				if (bMemberEnabled) {iMemberEnabled = 1;}&#13;
+				else{iMemberEnabled = 0;}&#13;
+&#13;
+				//Statement for query against DB&#13;
+				java.sql.Statement stmt = conn.createStatement();&#13;
+				//Resultset returned from query&#13;
+				java.sql.ResultSet userNames = stmt.executeQuery(dbQuery + "'" + sMemberLogin + "'");&#13;
+&#13;
+				//Move to first record from result. If there is no record returned it will fall to else statement	&#13;
+				if (userNames.next()) {&#13;
+					//Assign returned values to variables. These are then used when calling the stored procedure.&#13;
+					Integer userid = userNames.getInt(1);&#13;
+					String nameLogin = userNames.getString(2);&#13;
+					String nameDesc = userNames.getString(3);&#13;
+					String mstrModificationTime = userNames.getString(8);&#13;
+				&#13;
+					//printOut("-" + sMemberLogin + "----" + nameLogin + "-");&#13;
+					//printOut("Name Matches");&#13;
+&#13;
+					//If check that modification dates match if they do not match call stored procedure else do nothing&#13;
+					if (!sMemberModificationTime.equals(mstrModificationTime)) {&#13;
+						printOut("MODIFICATION TIME DOES NOT MATCH! UPDATING RECORD. {LOGIN:" + sMemberLogin + "},{NAME:" + sMemberFullName + "},{DB_MODIFICATION_TIME:" + mstrModificationTime + "},{MSTR_MODIFICATION_TIME:" +sMemberModificationTime + "}");&#13;
+						//call stored procedure and update existing records&#13;
+						//**************************************************************************************&#13;
+						try {&#13;
+							//load driver here&#13;
+							Class.forName(driverName).newInstance();&#13;
+							//use jdbc url, database login, and database password to create connection&#13;
+							java.sql.Connection SPconn = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+&#13;
+							java.sql.CallableStatement callStatement = SPconn.prepareCall(dbStoredProc);&#13;
+							//Set parameters to stored procedure&#13;
+							callStatement.setInt(1, userid);&#13;
+							callStatement.setString(2, nameLogin);&#13;
+							callStatement.setString(3, sMemberFullName);&#13;
+							callStatement.setInt(4, 0);&#13;
+							callStatement.setString(5, userUpdateLogin);&#13;
+							callStatement.setString(6, sMemberModificationTime);&#13;
+							callStatement.setInt(7, iMemberEnabled);&#13;
+							callStatement.execute();&#13;
+							callStatement.close();&#13;
+							SPconn.close();&#13;
+						} catch (Exception e) {&#13;
+							printErr(e.getMessage());&#13;
+						}&#13;
+					} else {&#13;
+						//printOut("Modification Time Matches! Do Nothing ");&#13;
+					}&#13;
+					//**************************************************************************************&#13;
+&#13;
+				} else {&#13;
+					printOut("NAME NOT FOUND IN DATABASE INSERTING RECORDS. {LOGIN: " + sMemberLogin + "},{NAME:" + sMemberFullName + "},{MSTR_MODIFICATION_TIME:" + sMemberModificationTime + "}");&#13;
+					//**************************************************************************************&#13;
+					//Creating database connection and calling stored procedure to insert new user.&#13;
+					try {&#13;
+						//load driver here&#13;
+						Class.forName(driverName).newInstance();&#13;
+						//use jdbc url, database login, and database password to create connection&#13;
+						java.sql.Connection SPconn = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+&#13;
+						java.sql.CallableStatement callStatement = SPconn.prepareCall(dbStoredProc);&#13;
+						//Set parameters to stored procedure&#13;
+						callStatement.setInt(1, 0);&#13;
+						callStatement.setString(2, sMemberLogin);&#13;
+						callStatement.setString(3, sMemberFullName);&#13;
+						callStatement.setInt(4, 0);&#13;
+						callStatement.setString(5, userUpdateLogin);&#13;
+						callStatement.setString(6, sMemberModificationTime);&#13;
+						callStatement.setInt(7, iMemberEnabled);&#13;
+						callStatement.execute();&#13;
+&#13;
+						callStatement.close();&#13;
+						SPconn.close();&#13;
+					} catch (Exception e) {&#13;
+						printErr(e.getMessage());&#13;
+					}&#13;
+					//**************************************************************************************&#13;
+				}&#13;
+				userNames.close();&#13;
+				stmt.close();&#13;
+			}&#13;
+			//Move to next member within the group&#13;
+			oMemberDetail.moveNext();&#13;
+		}&#13;
+		conn.close();&#13;
+	} catch (Exception e) {&#13;
+		printErr(e.getMessage());&#13;
+	}&#13;
+&#13;
+}</CODE>
+<SAMPLE/>
+<VERSION>1.1</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS>
+<INPUT INPUT_TYPE="STRING">sDbLogin</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbPassword</INPUT>
+<INPUT INPUT_TYPE="STRING">sUserGroup</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbServer</INPUT>
+<INPUT INPUT_TYPE="STRING">sDatabase</INPUT>
+</INPUT_PARAMS>
+<CLASSPATH>
+<CLASSPATH_ITEM>C:\JDBC\nzjdbc.jar</CLASSPATH_ITEM>
+</CLASSPATH>
+<TEST_INPUT>
+<TEST_INPUT_PARAM>D_DBLOGIN</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>PASSWORD</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>_XX_TESTGROUP</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>DB_SERVER</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>DATABASE</TEST_INPUT_PARAM>
+</TEST_INPUT>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>DEVSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>

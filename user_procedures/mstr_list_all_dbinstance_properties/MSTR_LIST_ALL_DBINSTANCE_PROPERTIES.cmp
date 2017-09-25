@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This procedure returns all DBInstances in a metadata and all of the properties associated to each DB Instance.</DESCRIPTION>
+<CODE>//************************ COMMAND MANAGER SYNTAX ***********************************************&#13;
+// LIST DB INSTANCES&#13;
+String sListDBInstances = "LIST ALL DBINSTANCES;";&#13;
+// LIST ALL PROPERTIES FOR DBINSTANCE&#13;
+String sListDBInstanceProps = "LIST ALL PROPERTIES FOR DBINSTANCE \"&lt;DB_INSTANCE&gt;\";";&#13;
+// LIST ALL PROPERTIES FOR DBCONNECTIONS&#13;
+String sListDBConnectionProps = "LIST ALL PROPERTIES FOR DBCONNECTION \"&lt;DB_CONNECTION&gt;\";";&#13;
+&#13;
+String sDelimiter = "~";&#13;
+String sTextQualifier = "\"";&#13;
+&#13;
+String sSeparator = "********************************************************************";&#13;
+String sSeparator2 = "--------------------------------------------------------------------";&#13;
+//***********************************************************************************************&#13;
+try {&#13;
+&#13;
+    ResultSet oResultSetDBInstances = executeCapture(sListDBInstances);&#13;
+    int DBInstanceRowCount = oResultSetDBInstances.getRowCount();&#13;
+&#13;
+    oResultSetDBInstances.moveFirst();&#13;
+&#13;
+    if (DBInstanceRowCount &gt; 0) {&#13;
+&#13;
+        //HOW MANY DB INSTANCES&#13;
+        //printOut("There are " + DBInstanceRowCount + " DB Instances");&#13;
+&#13;
+        while (!oResultSetDBInstances.isEof()) {&#13;
+&#13;
+            String sDBInstance = oResultSetDBInstances.getFieldValueString(DB_INSTANCE);&#13;
+            //Create new string with replaced DB Instance Name&#13;
+            String sListDBInstancePropsNew = sListDBInstanceProps.replace("&lt;DB_INSTANCE&gt;", sDBInstance);&#13;
+            &#13;
+            //Create resultset with all properties for DBInstance&#13;
+            ResultSet oResultSetDBInstanceProps = executeCapture(sListDBInstancePropsNew);&#13;
+&#13;
+            oResultSetDBInstanceProps.moveFirst();&#13;
+            if (oResultSetDBInstanceProps.getRowCount() &gt; 0) {&#13;
+&#13;
+                String sDBInstanceName = oResultSetDBInstanceProps.getFieldValueString(DB_INSTANCE);&#13;
+                String sDBInstanceID = oResultSetDBInstanceProps.getFieldValueString(ID);&#13;
+&#13;
+                if (sDBInstance.equals(sDBInstanceName)) {&#13;
+&#13;
+                    int colcount = oResultSetDBInstanceProps.getColumnCount();&#13;
+&#13;
+                    //Loop through all columns returned&#13;
+                    for (int x = 0; x &lt; colcount; x = x + 1) {&#13;
+&#13;
+                        String propval = oResultSetDBInstanceProps.getResultCell(x).getValueString();&#13;
+                        String propname = oResultSetDBInstanceProps.getResultCell(x).getName().replaceAll("\\s", "_");&#13;
+                        int proptype = oResultSetDBInstanceProps.getResultCell(x).getType();&#13;
+&#13;
+                        //Check for property type = 15 which signifies a DBCONNECTION Resultset&#13;
+                        if (proptype == 15) {&#13;
+&#13;
+                            ResultSet oResultSetCol = (ResultSet) oResultSetDBInstanceProps.getResultCell(x).getValue();&#13;
+&#13;
+                            oResultSetCol.moveFirst();&#13;
+&#13;
+                            String sDBConnection = (String) oResultSetCol.getFieldValue(DB_CONNECTION);&#13;
+                            //printOut(sDBConnection);&#13;
+                            propval = (String) oResultSetCol.getFieldValue(DB_CONNECTION);&#13;
+&#13;
+                            if (!sDBConnection.isEmpty()) {&#13;
+                                String sListDBConnectionPropsNew = sListDBConnectionProps.replace("&lt;DB_CONNECTION&gt;", sDBConnection);&#13;
+&#13;
+                                ResultSet oResultSetDBConnection = executeCapture(sListDBConnectionPropsNew);&#13;
+                                oResultSetDBConnection.moveFirst();&#13;
+&#13;
+                                if (oResultSetDBConnection.getRowCount() &gt; 0) {&#13;
+                                    while (!oResultSetDBConnection.isEof()) {&#13;
+&#13;
+                                        int DBConnColCount = oResultSetDBConnection.getColumnCount();&#13;
+&#13;
+                                        //Loop through all columns returned&#13;
+                                        for (int y = 0; y &lt; DBConnColCount; y = y + 1) {&#13;
+                                            String DBConnpropval = oResultSetDBConnection.getResultCell(y).getValueString().replaceAll("(?:\\n|\\r)", ";");&#13;
+                                            String DBConnpropname = oResultSetDBConnection.getResultCell(y).getName().replaceAll("\\s", "_");&#13;
+                                            int DBConnproptype = oResultSetDBConnection.getResultCell(y).getType();&#13;
+&#13;
+&#13;
+                                            printOut("----- " + DBConnpropname + ":" + DBConnpropval);&#13;
+&#13;
+                                        }&#13;
+                                        oResultSetDBConnection.moveNext();&#13;
+                                    }&#13;
+                                }&#13;
+                            }&#13;
+                        } //IF PROPTYPE==15&#13;
+                        else {&#13;
+                            printOut(propname + ":" + propval);&#13;
+                        }&#13;
+                    } //FOR LOOP ALL DB INSTANCE PROPERTY COLUMNS&#13;
+                } //IF SAME DBINSTANCE&#13;
+            } //IF DBINSTANCE PROPS ROWCOUNT &gt; 0&#13;
+			printOut(sSeparator2);&#13;
+            oResultSetDBInstances.moveNext();&#13;
+        } //WHILE DBINSTANCE LOOP&#13;
+    } //DBINSTANCE ROW COUNT &gt; 0&#13;
+} catch (Exception e) {&#13;
+    printErr(e.getMessage());&#13;
+}</CODE>
+<SAMPLE/>
+<VERSION>1.0</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS/>
+<CLASSPATH>
+<CLASSPATH_ITEM>.\jar\commons-lang3-3.4.jar</CLASSPATH_ITEM>
+</CLASSPATH>
+<TEST_INPUT/>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>DEVSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>

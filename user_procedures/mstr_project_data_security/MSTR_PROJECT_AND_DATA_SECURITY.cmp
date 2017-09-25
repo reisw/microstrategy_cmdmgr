@@ -1,0 +1,508 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This procedure is used to manage the updates that need to be made to users their group memberships as well as data security restrictions in MicroStrategy. It makes a call to a specific Web application api and uses the JSON results to build the appropriates commands which then update the MicroStrategy platform.
+
+Parameters:
+Name: sSecFilterFolder
+Type: String
+Purpose: This string should contain the path where security filters for a project are stored. The same path is used for all projects that are processed. i.e. \Project Objects\MD Security Filters\DATA_SECURITY
+
+Name: isTestRun
+Type: Boolean
+Puprose: This flag determines if the procedure should be run in test mode or not. When this is set to "True" the procedure will not make any changes that it finds during processing. This will only ouput the existing configurations in the project. When set to false it will process changes normally.
+
+Name: isProcessAll
+Type: Boolean
+Purpose: This flag is used to determine if all records in the system should be procesed or only the current add and delete records. When set to "True" it will process all of the records that are retrieved from the UPT application.
+
+Name: sUPTServer
+Type: String
+Purpose: This is the server where the UPT application JSON queries can be accessed from.
+
+Name: sUPTServerPort
+Type: Integer
+Purpose: This is the port where the UPT application runs on.</DESCRIPTION>
+<CODE>//**************** COMMAND MANAGER SYNTAX ***********************************************
+
+// LIST USER PROPERTIES
+String sListUser = "LIST ALL PROPERTIES FOR USER \"&lt;LOGIN&gt;\";";
+
+// ADD USER TO GROUPS
+String sAddUser = "ADD USER \"&lt;LOGIN&gt;\" TO GROUP \"&lt;USER_GROUP&gt;\";";
+
+// REMOVE USER FROM GROUPS
+String sRemoveUser = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"&lt;USER_GROUP&gt;\";";
+
+//LIST SECURITY FILTERS THAT ARE ASSIGNED TO A USER
+String sListUserSecFilter = "LIST SECURITY FILTERS USER \"&lt;LOGIN&gt;\" FOR PROJECT \"&lt;PROJECT_NAME&gt;\";";
+
+// DELETE SECURITY FILTER
+// DELETE SECURITY FILTER "&lt;sec_filter_name&gt;" [FOLDER "&lt;location_path&gt;"] FROM PROJECT "&lt;project_name&gt;";
+String sDeleteSecFilter = "DELETE SECURITY FILTER \"&lt;SEC_FILTER_NAME&gt;\" FOLDER \"&lt;LOCATION_PATH&gt;\" FROM PROJECT \"&lt;PROJECT_NAME&gt;\";";
+
+//LIST SECURITY FILTER PROPERTIES
+//LIST [ALL] PROPERTIES FOR SECURITY FILTER "&lt;sec_filter_name&gt;" [FOLDER "&lt;location_path&gt;"] FOR PROJECT "&lt;project_name&gt;";
+String sListAllSecFilterProps = "LIST ALL PROPERTIES FOR SECURITY FILTER \"&lt;SEC_FILTER_NAME&gt;\" FOLDER \"&lt;LOCATION_PATH&gt;\" FOR PROJECT \"&lt;PROJECT_NAME&gt;\";";
+
+// CREATE SECURITY FILTER
+// CREATE SECURITY FILTER "&lt;sec_filter_name&gt;" [DESCRIPTION "&lt;sec_filter_description&gt;"] [LONGDESCRIPTION "&lt;long_description&gt;"] [FOLDER "&lt;location_path&gt;"] [HIDDEN (TRUE | FALSE)] IN [PROJECT] "&lt;project_name&gt;" (FILTER "&lt;filter_name&gt;" [IN FOLDER "&lt;filter_location_path&gt;"] | EXPRESSION "&lt;expression&gt;") [TOP ATTRIBUTE LIST "&lt;top_attr_name1&gt;" [, "&lt;top_attr_name2&gt;" ...]] [BOTTOM ATTRIBUTE LIST "&lt;bottom_attr_name1&gt;" [, "&lt;bottom_attr_name2&gt;" ...]];
+String sCreateSecFilter = "CREATE SECURITY FILTER \"&lt;SEC_FILTER_NAME&gt;\" FOLDER \"&lt;LOCATION_PATH&gt;\" IN PROJECT \"&lt;PROJECT_NAME&gt;\" EXPRESSION \"&lt;SEC_FILTER_EXPRESSION&gt;\" ;";
+
+// APPLY SECURITY FILTER
+// APPLY SECURITY FILTER "&lt;sec_filter_name&gt;" [FOLDER "&lt;location_path&gt;"] TO ([USER] "&lt;login_name&gt;" [, "&lt;login_name&gt;" ...] | [USER] GROUP "&lt;group_name&gt;" [, "&lt;group_name&gt;" ...]) FOR PROJECT "&lt;project_name&gt;";
+String sApplySecFilter = "APPLY SECURITY FILTER \"&lt;SEC_FILTER_NAME&gt;\" FOLDER \"&lt;LOCATION_PATH&gt;\" TO USER \"&lt;LOGIN&gt;\" FOR PROJECT \"&lt;PROJECT_NAME&gt;\";";
+
+// ALTER SECURITY FILTER
+// ALTER SECURITY FILTER "&lt;sec_filter_name&gt;" [DESCRIPTION "&lt;sec_filter_description&gt;"] [LONGDESCRIPTION "&lt;long_description&gt;"] [FOLDER "&lt;location_path&gt;"] [HIDDEN (TRUE | FALSE)] IN [PROJECT] "&lt;project_name&gt;" [NAME "&lt;new_sec_filter_name&gt;"] [LOCATION "&lt;new_sec_filter_location&gt;"] [(FILTER "&lt;filter_name&gt;" [IN FOLDER "&lt;filter_location_path&gt;"] | EXPRESSION "&lt;new_expression&gt;")] [TOP ATTRIBUTE LIST "&lt;top_attr_name1&gt;" [, "&lt;top_attr_name2&gt;" ...]] [BOTTOM ATTRIBUTE LIST "&lt;bottom_attr_name1&gt;" [, "&lt;bottom_attr_name2&gt;" ...]];
+String sAlterSecFilter = "ALTER SECURITY FILTER \"&lt;SEC_FILTER_NAME&gt;\" FOLDER \"&lt;LOCATION_PATH&gt;\" IN PROJECT \"&lt;PROJECT_NAME&gt;\" EXPRESSION \"&lt;SEC_FILTER_EXPRESSION&gt;\" ;";
+
+//**************** WEB APPLICATION URL API SYNTAX ***********************************************
+
+//JSON REQUEST TO GET USERS TO PROCESS
+String sUrlApprovedButNotGranted = "http://&lt;UPTServer_Port&gt;/getAllapprovedButNotGrantedRequests";
+
+//JSON REQUET TO UPDATE REQUESTS THAT ARE COMPLETE
+String sUrlGrantUserRequests = "http://&lt;UPTServer_Port&gt;/grantUserRequests?UserID=&lt;USER_ID&gt;&amp;ProjectID=&lt;PROJECT_ID&gt;";
+
+//JSON REQUEST TO PROCESS ALL USERS
+String sUrlAllUsersAccess = "http://&lt;UPTServer_Port&gt;/getAllCurrentUsersAndAccess";
+
+//***********************************************************************************************
+
+//DATA SECURITY FILTER LOCATION
+String sSecFiltLocPath = sSecFilterFolder;
+
+//DETERMINE IF THIS IS A TEST RUN OR NOT
+
+Boolean isTestRunOnly = isTestRun;
+
+//PROCESS ALL RECORDS OR ONLY DELTAS
+Boolean isProcessAllUsers = isProcessAll;
+
+String sSeparator = "********************************************************************";
+String sSeparator2 = "--------------------------------------------------------------------";
+//Holds url that will be processed
+String sUrlToProcess;
+
+//Update Server and Port information
+sUrlApprovedButNotGranted = sUrlApprovedButNotGranted.replace("&lt;UPTServer_Port&gt;", sUPTServer + ":" + sUPTServerPort);
+sUrlGrantUserRequests = sUrlGrantUserRequests.replace("&lt;UPTServer_Port&gt;", sUPTServer + ":" + sUPTServerPort);
+sUrlAllUsersAccess = sUrlAllUsersAccess.replace("&lt;UPTServer_Port&gt;", sUPTServer + ":" + sUPTServerPort);
+
+
+
+try {
+
+    //DEFINE URL BASED ON PROCESS ALL FLAG
+    if (isProcessAllUsers) {
+        sUrlToProcess = sUrlAllUsersAccess;
+    } else {
+        sUrlToProcess = sUrlApprovedButNotGranted;
+    }
+
+    //Connection Information
+    printOut("Connecting to the following URL: " + sUrlToProcess);
+
+    java.net.URL url = new java.net.URL(sUrlToProcess);
+
+    //URL PROPERTIES
+    //printOut("URL is " + url.toString());
+    //printOut("protocol is " + url.getProtocol());
+    //printOut("authority is " + url.getAuthority());
+    //printOut("file name is " + url.getFile());
+    //printOut("host is " + url.getHost());
+    //printOut("path is " + url.getPath());
+    //printOut("port is " + url.getPort());
+    //printOut("default port is " + url.getDefaultPort());
+    //printOut("query is " + url.getQuery());
+    //printOut("ref is " + url.getRef());
+
+    //READ OUTPUT OF URL
+    BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream(), "UTF-8"));
+
+
+    //***************************************************************************************
+
+    for (String sValue;
+        (sValue = reader.readLine()) != null;) {
+
+        //********** PARSE JSON STRING **************
+        org.json.simple.parser.JSONParser parser = new org.json.simple.parser.JSONParser();
+
+        Object obj = parser.parse(sValue);
+
+        org.json.simple.JSONObject jsonobj = (org.json.simple.JSONObject) obj;
+
+        //printOut("000**************************************************************************************************************************");
+        //**************** ITERATE THROUGH JSON RECORD
+        //printOut(jsonobj.keySet());
+
+        for (Iterator iterator = jsonobj.keySet().iterator(); iterator.hasNext();) {
+            String key = (String) iterator.next();
+            printOut(sSeparator);
+            printOut("Processing JSON KEY: " + key);
+
+            //*********** Create JSONObject to hold contents of JSON Record
+            org.json.simple.JSONObject structure = (org.json.simple.JSONObject) jsonobj.get(key);
+
+
+            String sUserID = (String) structure.get("UserID");
+            String sUserName = (String) structure.get("UserName");
+            String sProjectId = (String) structure.get("ProjectId");
+            String sProjectName = (String) structure.get("Project");
+            String sApproverName = (String) structure.get("ApproverName");
+
+
+            //printOut("----- UserID:" + sUserID);
+            printOut("----- UserName:" + sUserName);
+            //printOut("----- ApproverName: " + sApproverName);
+            printOut("----- Project ID: " + sProjectId);
+            //printOut("----- Project: " + sProjectName);
+            //printOut("----- Approved: " + structure.get("Approved"));
+            //printOut("----- Role: " + structure.get("Role"));
+            printOut(sSeparator2);
+
+            //****************************************************************************************
+            // CHECK IF USER EXISTS IN MICROSTRATEGY
+            //
+            //Replace placeholder with LOGIN information
+            String sListUserNew = sListUser.replace("&lt;LOGIN&gt;", sUserName);
+            int exCodeListUser = execute(sListUserNew);
+
+            //DISPLAY EXIT CODE
+            //printOut("List User Properties Exit Code: " + exCodeListUser);
+            // IF RETURN CODE IS ZERO THEN PROCESS ELSE DO NOTHING
+            if (0 == exCodeListUser) {
+
+                //GET EXISTING USER GROUP INFORMATION
+                ResultSet oListUserResults = executeCapture(sListUserNew);
+                oListUserResults.moveFirst();
+
+                printOut("User: " + oListUserResults.getResultCell(DisplayPropertyEnum.LOGIN).getValueString());
+
+                ResultSet oListUserResultsGroups = (ResultSet) oListUserResults.getResultCell(DisplayPropertyEnum.USER_GROUP_RESULTSET).getValue();
+                oListUserResultsGroups.moveFirst();
+
+                org.apache.commons.lang3.text.StrBuilder sUserCurrentGroupMembership = new org.apache.commons.lang3.text.StrBuilder();
+
+                while (!oListUserResultsGroups.isEof()) {
+
+                    sUserCurrentGroupMembership.appendSeparator(", ", null);
+                    sUserCurrentGroupMembership.append(oListUserResultsGroups.getResultCell(DisplayPropertyEnum.USER_GROUP).getValueString());
+
+                    oListUserResultsGroups.moveNext();
+                }
+
+                sUserCurrentGroupMembership.insert(0, "Current group membership: ");
+
+
+                printOut(sUserCurrentGroupMembership);
+                printOut(sSeparator2);
+
+                //****************************************************************************************
+                //CHECK IF WE SHOULD PROCESS ALL USERS OR NOT
+                if (isProcessAllUsers) {
+                    //printOut("PROCESS ALL USERS!!!!");printOut(sSeparator2);
+                    org.json.simple.JSONArray arrayGroup = (org.json.simple.JSONArray) structure.get("Groups");
+                    org.apache.commons.lang3.text.StrBuilder sGroups = new org.apache.commons.lang3.text.StrBuilder(arrayGroup.size());
+                    sGroups.appendWithSeparators(arrayGroup, "\",\"");
+
+                    if (!sGroups.isEmpty()) {
+                        //Replace placeholder with LOGIN and USER GROUP information FOR GROUPS ADD
+                        String sUserNew = sAddUser.replace("&lt;LOGIN&gt;", sUserName);
+                        sUserNew = sUserNew.replace("&lt;USER_GROUP&gt;", sGroups);
+                        printOut(sUserNew);
+                        printOut(sSeparator2);
+
+                        //CHECK FOR TESTRUN
+                        if (isTestRunOnly) {
+                            printOut("TEST RUN ONLY NO CHANGES MADE TO GROUP MEMBERSHIP");
+                            printOut(sSeparator2);
+                        } else { // ADD USER TO GROUPS
+                            int exCodeUser = execute(sUserNew);
+                            //printOut(exCodeUser);
+                        }
+
+                    } else {
+                        printOut("NO GROUPS");
+                        printOut(sSeparator2);
+                    }
+                }
+                //PROCESS ADDS AND DELETES ONLY
+                else {
+
+                    org.json.simple.JSONArray arrayGroupAdd = (org.json.simple.JSONArray) structure.get("Groups_ADD");
+                    org.json.simple.JSONArray arrayGroupDelete = (org.json.simple.JSONArray) structure.get("Groups_DELETE");
+
+                    org.apache.commons.lang3.text.StrBuilder sGroupsAdd = new org.apache.commons.lang3.text.StrBuilder(arrayGroupAdd.size());
+                    org.apache.commons.lang3.text.StrBuilder sGroupsDelete = new org.apache.commons.lang3.text.StrBuilder(arrayGroupDelete.size());
+
+                    sGroupsAdd.appendWithSeparators(arrayGroupAdd, "\",\"");
+                    sGroupsDelete.appendWithSeparators(arrayGroupDelete, "\",\"");
+
+                    //CHECK IF THERE ARE ANY ADDS
+                    if (!sGroupsAdd.isEmpty()) {
+
+                        //Replace placeholder with LOGIN and USER GROUP information FOR GROUPS ADD
+                        String sAddUserNew = sAddUser.replace("&lt;LOGIN&gt;", sUserName);
+                        sAddUserNew = sAddUserNew.replace("&lt;USER_GROUP&gt;", sGroupsAdd);
+                        printOut(sAddUserNew);
+                        printOut(sSeparator2);
+
+                        //CHECK FOR TESTRUN
+                        if (isTestRunOnly) {
+                            printOut("TEST RUN ONLY NO CHANGES MADE TO GROUP MEMBERSHIP");
+                            printOut(sSeparator2);
+                        } else {
+                            // ADD USER TO GROUPS
+                            int exCodeAddUser = execute(sAddUserNew);
+                            //printOut(exCodeAddUser);
+                        }
+
+                    } else {
+                        printOut("NO GROUPS TO ADD");
+                        printOut(sSeparator2);
+                    }
+
+                    //CHECK IF THERE ARE ANY DELETES
+                    if (!sGroupsDelete.isEmpty()) {
+                        //Replace placeholder with LOGIN and USER GROUP information FOR GROUPS DELETE
+                        String sRemoveUserNew = sRemoveUser.replace("&lt;LOGIN&gt;", sUserName);
+                        sRemoveUserNew = sRemoveUserNew.replace("&lt;USER_GROUP&gt;", sGroupsDelete);
+                        printOut(sRemoveUserNew);
+                        printOut(sSeparator2);
+
+                        //CHECK FOR TESTRUN
+                        if (isTestRunOnly) {
+                            printOut("TEST RUN ONLY NO CHANGES MADE TO GROUP MEMBERSHIP");
+                            printOut(sSeparator2);
+                        } else {
+
+                            // ADD USER TO GROUPS
+                            int exCodeRemoveUser = execute(sRemoveUserNew);
+                            //printOut(exCodeRemoveUser);
+                        }
+
+                    } else {
+                        printOut("NO GROUPS TO DELETE");
+                        printOut(sSeparator2);
+                    }
+
+
+                }
+
+                //DATA SECURITY PROCESSING SECTION ****************************************************************************************
+                //printOut("----- dataSecurityFilters: " + structure.get("dataSecurityFilters"));
+
+                org.json.simple.JSONObject structDataSec = (org.json.simple.JSONObject) structure.get("dataSecurityFilters");
+
+                //Variable to hold final expression build
+                String sDataSecExpr = "";
+                org.apache.commons.lang3.text.StrBuilder sDataSec = new org.apache.commons.lang3.text.StrBuilder();
+
+                //********************DATA SECURITY LOOP  *********************************
+                Iterator iteratorDataSec = structDataSec.keySet().iterator();
+                while (iteratorDataSec.hasNext()) {
+                    String attrdata = (String) iteratorDataSec.next();
+                    //printOut("---------- Attribute for security: " + attrdata);
+
+                    org.json.simple.JSONObject structDataSecValues = (org.json.simple.JSONObject) structDataSec.get(attrdata);
+                    //printOut("---------- Attribute Location: " + structDataSecValues.get("Location"));
+
+                    //VALUES SYNTAX
+                    //org.json.simple.JSONArray arrayDataSecLocation = (org.json.simple.JSONArray) structDataSecLocation.get("Location");
+
+
+                    //printOut(arrayDataSec.get("Location"));
+
+                    sDataSec.appendPadding(1, '[');
+                    sDataSec.append(structDataSecValues.get("Location"));
+                    sDataSec.append(attrdata);
+                    sDataSec.append("]@ID IN (");
+
+                    //printOut("-----  StrBuilder: " + sDataSec);
+
+                    //GET VALUES
+                    org.json.simple.JSONArray arrayDataSecValues = (org.json.simple.JSONArray) structDataSecValues.get("Values");
+
+                    Iterator iteratorDataSecValues = arrayDataSecValues.iterator();
+                    while (iteratorDataSecValues.hasNext()) {
+                        //printOut(iteratorDataSecValues.next());
+                        //String keyDataSec = (String) iteratorDataSecValues.next();
+                        org.json.simple.JSONObject structDataSecContent = (org.json.simple.JSONObject) iteratorDataSecValues.next();
+                        //printOut("---------- ID = " + structDataSecContent.get("id"));
+                        //printOut("---------- DESC = " + structDataSecContent.get("Description"));
+
+                        sDataSec.append(structDataSecContent.get("id"));
+                        //Check if there are any more values to filter on
+                        if (iteratorDataSecValues.hasNext()) {
+
+                            sDataSec.append(",");
+                        }
+
+                    }
+                    //Close String builder expression
+                    sDataSec.append(")");
+
+                    //printOut("----------  StrBuilder: " + sDataSec);
+
+                    //Check if there are any more records. If there are then we append connector, otherwise we are finished
+                    if (iteratorDataSec.hasNext()) {
+
+                        sDataSec.append(" AND ");
+
+                    }
+
+                    //Execution drops here when there are no more records after current record
+                    else {
+
+                        sDataSecExpr = sDataSec.toString();
+
+                        //Builder command to check if there is an existing security filter for the user
+                        String sListAllSecFilterPropsNew = sListAllSecFilterProps.replace("&lt;SEC_FILTER_NAME&gt;", sUserName);
+                        sListAllSecFilterPropsNew = sListAllSecFilterPropsNew.replace("&lt;LOCATION_PATH&gt;", sSecFiltLocPath);
+                        sListAllSecFilterPropsNew = sListAllSecFilterPropsNew.replace("&lt;PROJECT_NAME&gt;", sProjectName);
+                        //printOut(sListAllSecFilterPropsNew);
+
+                        int exCode = execute(sListAllSecFilterPropsNew);
+                        //Check if Security filter already exists and determine what needs to be done
+                        switch (exCode) {
+
+                            case 0: // SECURITY FILTER EXISTS
+                                //Security Filter exist, capture current filter expression
+                                //Print current security filter contents
+                                printOut("Security filter: " + sUserName + " already exists");
+                                ResultSet oSecFiltProps = executeCapture(sListAllSecFilterPropsNew);
+                                oSecFiltProps.moveFirst();
+
+                                printOut("Security Filter Expression: " + oSecFiltProps.getResultCell(DisplayPropertyEnum.EXPRESSION).getValueString());
+                                printOut(sSeparator2);
+
+                                //Builder command to alter an existing security filter for the user
+                                String sAlterSecFilterNew = sAlterSecFilter.replace("&lt;SEC_FILTER_NAME&gt;", sUserName);
+                                sAlterSecFilterNew = sAlterSecFilterNew.replace("&lt;LOCATION_PATH&gt;", sSecFiltLocPath);
+                                sAlterSecFilterNew = sAlterSecFilterNew.replace("&lt;PROJECT_NAME&gt;", sProjectName);
+                                sAlterSecFilterNew = sAlterSecFilterNew.replace("&lt;SEC_FILTER_EXPRESSION&gt;", sDataSecExpr);
+                                //printOut(sAlterSecFilterNew);
+
+                                //CHECK FOR TEST RUN
+                                if (isTestRunOnly) {
+                                    printOut("TEST RUN ONLY NO CHANGES MADE TO SECURITY FILTERS");
+                                    printOut(sSeparator2);
+                                    break;
+                                } else {
+                                    int exCodeAlterSecFilter = execute(sAlterSecFilterNew);
+                                    if (0 == exCodeAlterSecFilter) {
+                                        printOut("SUCCESSFULLY ALTERED SECURITY FILTER FOR : " + sUserName + " IN PROJECT " + sProjectName);
+                                    } else {
+                                        printOut("ERROR ALTERING SECURITY FILTER. Error Code: " + exCodeAlterSecFilter);
+                                    }
+
+                                    break;
+                                }
+
+
+
+                            case 4: //PROJECT NOT FOUND
+                                printOut("EXIT CODE: " + exCode);
+
+                                break;
+                            case 8: //SECURITY FILTER NOT FOUND OR FOLDER PATH NOT FOUND
+                                printOut("EXIT CODE: " + exCode);
+
+                                //Builder command to create new security filter for the user
+                                String sCreateSecFilterNew = sCreateSecFilter.replace("&lt;SEC_FILTER_NAME&gt;", sUserName);
+                                sCreateSecFilterNew = sCreateSecFilterNew.replace("&lt;LOCATION_PATH&gt;", sSecFiltLocPath);
+                                sCreateSecFilterNew = sCreateSecFilterNew.replace("&lt;PROJECT_NAME&gt;", sProjectName);
+                                sCreateSecFilterNew = sCreateSecFilterNew.replace("&lt;SEC_FILTER_EXPRESSION&gt;", sDataSecExpr);
+                                //printOut(sCreateSecFilterNew);
+
+                                //CHECK FOR TEST RUN
+                                if (isTestRunOnly) {
+                                    printOut("TEST RUN ONLY NO CHANGES MADE TO SECURITY FILTERS");
+                                    printOut(sSeparator2);
+                                    break;
+                                } else {
+                                    int exCodeCreateSecFilter = execute(sCreateSecFilterNew);
+                                    if (0 == exCodeCreateSecFilter) {
+                                        printOut("SUCCESSFULLY CREATED SECURITY FILTER FOR : " + sUserName + " IN PROJECT " + sProjectName);
+
+                                        //ASSIGN FILTER TO USER
+                                        String sApplySecFilterNew = sApplySecFilter.replace("&lt;SEC_FILTER_NAME&gt;", sUserName);
+                                        sApplySecFilterNew = sApplySecFilterNew.replace("&lt;LOCATION_PATH&gt;", sSecFiltLocPath);
+                                        sApplySecFilterNew = sApplySecFilterNew.replace("&lt;PROJECT_NAME&gt;", sProjectName);
+                                        sApplySecFilterNew = sApplySecFilterNew.replace("&lt;LOGIN&gt;", sUserName);
+                                        int exCodeApplySecFilter = execute(sApplySecFilterNew);
+
+
+
+
+                                    } else {
+                                        printOut(exCodeCreateSecFilter);
+                                    }
+
+                                    break;
+                                }
+
+                            default:
+                                printOut("EXIT CODE: " + exCode);
+                                break;
+                        }
+
+                        //printOut("---------------- DATA FILTER EXPRESSION: " + sDataSecExpr);
+
+                    }
+
+                }
+
+		//CHECK FOR TEST RUN
+                  if (isTestRunOnly) {
+                      printOut("TEST RUN ONLY NO CHANGES MADE TO UPT APP");
+                      printOut(sSeparator2);
+                  } else {
+                //BUILD URL TO COMPLETE REQUEST
+                String sUrlGrantUserRequestsNew = sUrlGrantUserRequests.replace("&lt;USER_ID&gt;", sUserID);
+                sUrlGrantUserRequestsNew = sUrlGrantUserRequestsNew.replace("&lt;PROJECT_ID&gt;", sProjectId);
+                java.net.URL urlGrantUserRequests = new java.net.URL(sUrlGrantUserRequestsNew);
+                java.net.URLConnection urlGrantUserRequestsConn = urlGrantUserRequests.openConnection();
+                InputStream is = urlGrantUserRequestsConn.getInputStream();
+		}
+                //DATA SECURITY ******************************************************************************************************
+
+            } else {
+                printOut("----------------------------------- USER NOT FOUND !!!!!!!!!  EXIT CODE: " + exCodeListUser);
+            }
+
+        }
+    }
+
+} catch (Exception e) {
+    printErr(e.getMessage());
+}</CODE>
+<SAMPLE/>
+<VERSION>1.0</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS>
+<INPUT INPUT_TYPE="STRING">sSecFilterFolder</INPUT>
+<INPUT INPUT_TYPE="BOOLEAN">isTestRun</INPUT>
+<INPUT INPUT_TYPE="BOOLEAN">isProcessAll</INPUT>
+<INPUT INPUT_TYPE="STRING">sUPTServer</INPUT>
+<INPUT INPUT_TYPE="INT">sUPTServerPort</INPUT>
+</INPUT_PARAMS>
+<CLASSPATH>
+<CLASSPATH_ITEM>.\JAR\json-simple-1.1.1.jar</CLASSPATH_ITEM>
+<CLASSPATH_ITEM>.\JAR\commons-lang3-3.4.jar</CLASSPATH_ITEM>
+</CLASSPATH>
+<TEST_INPUT>
+<TEST_INPUT_PARAM>\Project Objects\MD Security Filters\DATA_SECURITY</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>false</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>False</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>servername</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM>8000</TEST_INPUT_PARAM>
+</TEST_INPUT>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>DEVSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>

@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This process reviews a specific group in MSTR and then verifies if the user is a valid user in the GFE User access table. If the user does not exist they are removed from the group. The script will also remove them from specific groups that provide access to the project. These groups can be found in the script. This table is managed by the GFE application and will used to manage the valid users in MSTR. The sUserGroup parameter should be the name of the GFE Group used in MicroStrategy to manage who has a GFE id. This script has been designed to work specifically with the Global Operational Project (GOPS).</DESCRIPTION>
+<CODE>//*************************************************************************************&#13;
+//&#13;
+//String sGroup = "LDAP Users";&#13;
+//String sGroup = "_TESTGROUP";&#13;
+String sGroup = sUserGroup;&#13;
+&#13;
+//The following are user groups that the user should also be removed from if they are not to have GFE access&#13;
+String sRemoveUser01 = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"O_GOPS_GLOBAL_PLAN_AND_MERCH\";";&#13;
+String sRemoveUser02 = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"R_GOPS_005_WEB_BASIC\";";&#13;
+String sRemoveUser03 = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"R_GOPS_010_WEB_BASIC_PLUS\";";&#13;
+String sRemoveUser04 = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"R_GOPS_020_WEB_PLUS\";";&#13;
+String sRemoveUser05 = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"R_GOPS_030_VISUAL_INSIGHT\";";&#13;
+&#13;
+//The following strings are used to hold the values returned from the execution of the "List Members ..." command&#13;
+String sMemberLogin;&#13;
+//String sMemberFullName;&#13;
+//String sMemberModificationTime;&#13;
+boolean bMemberIsgroup;&#13;
+&#13;
+&#13;
+//String for List Login and NTLINK&#13;
+String sListGroupMembers = "LIST MEMBERS FOR USER GROUP \"&lt;USER_GROUP&gt;\";";&#13;
+&#13;
+//String for Removing user from group&#13;
+String sRemoveUser = "REMOVE USER \"&lt;LOGIN&gt;\" FROM GROUP \"&lt;USER_GROUP&gt;\";";&#13;
+&#13;
+//**************************************************************************************&#13;
+//DATABASE CONNECTION PARAMETERS&#13;
+//CLASSPATH IN PROCEDURE MUST POINT TO LOCATION OF NZJDBC.jar file&#13;
+String driverName = "org.netezza.Driver";&#13;
+&#13;
+String connectionURL = "jdbc:netezza://&lt;DBSERVER&gt;.poloralphlauren.com:5480/&lt;DATABASE&gt;";&#13;
+	connectionURL = connectionURL.replace("&lt;DATABASE&gt;", sDatabase);&#13;
+	connectionURL = connectionURL.replace("&lt;DBSERVER&gt;", sDbServer);&#13;
+String login = sDbLogin;&#13;
+&#13;
+String password = sDbPassword;&#13;
+&#13;
+&#13;
+//Query to return user details from MBLSEC_USR table&#13;
+String dbQuery = "SELECT DISTINCT(MUAC_USER_ID) from MAS_USER_ACCESS_V WHERE MUAC_ACCESS_LEVEL = 1 AND MUAC_ACCESS_PARM1 = '40' AND MUAC_ACCESS_STATUS = 'ACTIVE' AND MUAC_USER_ID = UPPER('&lt;USER_ID&gt;')";&#13;
+&#13;
+//*************************************************************************************&#13;
+&#13;
+&#13;
+//Replace place holder with User Group input string&#13;
+sListGroupMembers = sListGroupMembers.replace("&lt;USER_GROUP&gt;", sGroup);&#13;
+&#13;
+//Capture resultset of users returned&#13;
+ResultSet oResultSetMembers = executeCapture(sListGroupMembers);&#13;
+&#13;
+try {&#13;
+&#13;
+	oResultSetMembers.moveFirst();&#13;
+&#13;
+	while (!oResultSetMembers.isEof()) {&#13;
+&#13;
+		//Populate resultset object with results&#13;
+		ResultSet oMemberDetail = (ResultSet) oResultSetMembers.getFieldValue(DisplayPropertyEnum.MEMBER_RESULTSET);&#13;
+&#13;
+		oMemberDetail.moveFirst();&#13;
+		while (!oMemberDetail.isEof()) {&#13;
+&#13;
+			//Assign IS_GROUP Flag&#13;
+			bMemberIsgroup = (Boolean) oMemberDetail.getFieldValue(IS_GROUP);&#13;
+&#13;
+			//Assign values from resultset to variables&#13;
+			sMemberLogin = oMemberDetail.getFieldValueString(LOGIN);&#13;
+&#13;
+			//Only process users&#13;
+			if (!bMemberIsgroup) {&#13;
+				try {&#13;
+&#13;
+					//load jdbc driver here&#13;
+					Class.forName(driverName).newInstance();&#13;
+&#13;
+					//use jdbc url, database login, and database password to create connection&#13;
+					//Create connection to database&#13;
+					java.sql.Connection conn = java.sql.DriverManager.getConnection(connectionURL, login, password);&#13;
+&#13;
+					//Statement for query against DB&#13;
+					java.sql.Statement stmt = conn.createStatement();&#13;
+&#13;
+					String dbQueryNew = dbQuery.replace("&lt;USER_ID&gt;", sMemberLogin);&#13;
+&#13;
+					//Resultset returned from query&#13;
+					java.sql.ResultSet userNames = stmt.executeQuery(dbQueryNew);&#13;
+&#13;
+					//Move to first record from result. If there is no record returned it will fall to else statement	&#13;
+					if (userNames.next()) {&#13;
+						//Assign returned values to variables. These are then used when calling the stored procedure.&#13;
+						String MuacUserId = userNames.getString(1);&#13;
+						//String nameDesc = userNames.getString(3);&#13;
+						//String mstrModificationTime = userNames.getString(8);&#13;
+					} else {&#13;
+						//printOut("RECORD NOT FOUND");&#13;
+&#13;
+						String sRemoveUserNew = sRemoveUser.replace("&lt;LOGIN&gt;", sMemberLogin);&#13;
+						sRemoveUserNew = sRemoveUserNew.replace("&lt;USER_GROUP&gt;", sGroup);&#13;
+						execute(sRemoveUserNew);&#13;
+						&#13;
+						//Remove user from the other GOPS groups that they should not be in.&#13;
+						String sRemoveUserNew01 = sRemoveUser01.replace("&lt;LOGIN&gt;", sMemberLogin);&#13;
+						execute(sRemoveUserNew01);&#13;
+						String sRemoveUserNew02 = sRemoveUser02.replace("&lt;LOGIN&gt;", sMemberLogin);&#13;
+						execute(sRemoveUserNew02);&#13;
+						String sRemoveUserNew03 = sRemoveUser03.replace("&lt;LOGIN&gt;", sMemberLogin);&#13;
+						execute(sRemoveUserNew03);&#13;
+						String sRemoveUserNew04 = sRemoveUser04.replace("&lt;LOGIN&gt;", sMemberLogin);&#13;
+						execute(sRemoveUserNew04);&#13;
+						String sRemoveUserNew05 = sRemoveUser05.replace("&lt;LOGIN&gt;", sMemberLogin);&#13;
+						execute(sRemoveUserNew05);&#13;
+&#13;
+&#13;
+					}&#13;
+&#13;
+					stmt.close();&#13;
+					conn.close();&#13;
+&#13;
+				} catch (Exception e) {&#13;
+					printErr(e.getMessage());&#13;
+				}&#13;
+			} else {}&#13;
+&#13;
+			oMemberDetail.moveNext();&#13;
+		}&#13;
+&#13;
+		oResultSetMembers.moveNext();&#13;
+&#13;
+	}&#13;
+} catch (Exception e) {&#13;
+	printErr(e.getMessage());&#13;
+}</CODE>
+<SAMPLE>EXECUTE PROCEDURE GFE_MSTRGROUP_UPD ("USER_GROUP","DB_LOGIN","PWD","DATBASE","DB_SERVER");</SAMPLE>
+<VERSION>1.1</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS>
+<INPUT INPUT_TYPE="STRING">sUserGroup</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbLogin</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbPassword</INPUT>
+<INPUT INPUT_TYPE="STRING">sDatabase</INPUT>
+<INPUT INPUT_TYPE="STRING">sDbServer</INPUT>
+</INPUT_PARAMS>
+<CLASSPATH>
+<CLASSPATH_ITEM>nzjdbc.jar</CLASSPATH_ITEM>
+</CLASSPATH>
+<TEST_INPUT>
+<TEST_INPUT_PARAM>User Group</TEST_INPUT_PARAM>
+<TEST_INPUT_PARAM/>
+<TEST_INPUT_PARAM/>
+<TEST_INPUT_PARAM/>
+<TEST_INPUT_PARAM/>
+</TEST_INPUT>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>DEVSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This procedure is used to updated the TrustedLogin field for a user if it is not currently populated. The procedure will search through all users in the environment, check if the field is blank and then update it if there is a valid WIN NT id associated with the id. This process will ignore any users that do not have a WINNT link associated with them.
+
+1.1 Updated to correctly populate users trusted login to be based on LDAP login information.
+</DESCRIPTION>
+<CODE>&#13;
+String sListAllUserProperties = "LIST ALL PROPERTIES FOR USERS IN GROUP \"Everyone\";";&#13;
+&#13;
+String sAlterUserTrustedLogin = "ALTER USER \"&lt;USER_LOGIN&gt;\" TRUSTEDLOGIN \"&lt;TRUSTED_LOGIN&gt;\";";&#13;
+&#13;
+//*************************************************************************************&#13;
+try {&#13;
+	//Capture resultset of users returned&#13;
+	ResultSet oResultSetMembers = executeCapture(sListAllUserProperties);&#13;
+&#13;
+	oResultSetMembers.moveFirst();&#13;
+	&#13;
+	//Loop until end of results&#13;
+	while (!oResultSetMembers.isEof()) {&#13;
+		&#13;
+		//Assign Trusted Login field to string variable&#13;
+		String sTrustedLogin = oResultSetMembers.getResultCell(TRUSTED_LOGIN).getValueString();&#13;
+		//Check if Trusted Login isEmpty, if it is then it will check if the user has an NT Link defined&#13;
+		if (org.apache.commons.lang3.StringUtils.isEmpty(sTrustedLogin)) {&#13;
+			//Assign LDAP_LINK to string variable&#13;
+			String sNtLink = oResultSetMembers.getResultCell(LDAP_LINK).getValueString();&#13;
+&#13;
+			//*************************************************************************************************&#13;
+			//Parse LDAP Entry for DC values&#13;
+			//*************************************************************************************************&#13;
+			//Assign Ldap entry to LdapName&#13;
+			javax.naming.ldap.LdapName ln = new javax.naming.ldap.LdapName(sNtLink);&#13;
+			&#13;
+			//Define sDcNew variable. Used to create fully qualified domain. i.e. poloralphlauren.com&#13;
+			String sDcNew = "";&#13;
+			&#13;
+			//Iterate through all LDAP entries&#13;
+			for(javax.naming.ldap.Rdn rdn : ln.getRdns()) {&#13;
+			&#13;
+			//Only look at DC record types from LDAP entries	&#13;
+			  if(rdn.getType().equalsIgnoreCase("DC")) {&#13;
+				//Assign DC Ldap entry to variable &#13;
+				String sDc = (String) (rdn.getValue());&#13;
+				&#13;
+				//Determine if this is the first time processing DN entries. Need to check if there are multiple entries and separate with period	&#13;
+				if (org.apache.commons.lang3.StringUtils.isNotEmpty(sDcNew))&#13;
+					{sDcNew = "." + sDcNew;}&#13;
+			&#13;
+				//Assign DC entries to new DC variable. Concatenates multiple entries	&#13;
+				sDcNew = sDc + sDcNew;&#13;
+			    }&#13;
+			}&#13;
+			//*************************************************************************************************&#13;
+&#13;
+			//Check if NT_LINK is not empty, if so then it will execute the command to update the Trusted Login for this user&#13;
+			if (org.apache.commons.lang3.StringUtils.isNotEmpty(sNtLink)){&#13;
+				String sUserLogin = oResultSetMembers.getResultCell(LOGIN).getValueString();&#13;
+				String sFullName = oResultSetMembers.getResultCell(FULL_NAME).getValueString();&#13;
+				//Concatenate the user login with the fully qualified domain that was built from LDAP Record&#13;
+				String sLdapLinkDomain = (sUserLogin + "@" + sDcNew);&#13;
+				//Update Alter User syntax with user login that is going to be updated.&#13;
+				String sAlterUserTrustedLoginNew = sAlterUserTrustedLogin.replace("&lt;USER_LOGIN&gt;", sUserLogin);&#13;
+				//Update Alter User syntax with trustedlogin value&#13;
+				          sAlterUserTrustedLoginNew = sAlterUserTrustedLoginNew.replace("&lt;TRUSTED_LOGIN&gt;", sLdapLinkDomain);&#13;
+				//Execute the alter users command to update the trusted login&#13;
+				execute(sAlterUserTrustedLoginNew);&#13;
+				//printOut(sAlterUserTrustedLoginNew);&#13;
+				printOut("TRUSTED LOGIN FOR USER ADDED. {LOGIN: " + sUserLogin + "},{NAME:" + sFullName + "},{TRUSTED_LOGIN:" + sLdapLinkDomain + "}");&#13;
+			}else {}&#13;
+&#13;
+		} else {}&#13;
+		oResultSetMembers.moveNext();&#13;
+	}&#13;
+} catch (Exception e) {&#13;
+	printErr(e.getMessage());&#13;
+}</CODE>
+<SAMPLE/>
+<VERSION>1.1</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS/>
+<CLASSPATH>
+<CLASSPATH_ITEM>.\JAR\commons-lang3-3.4.jar</CLASSPATH_ITEM>
+</CLASSPATH>
+<TEST_INPUT/>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>DEVSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>

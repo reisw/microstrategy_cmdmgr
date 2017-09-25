@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="no"?>
+<PROCEDURE_DEFINITION>
+<DESCRIPTION>This procedure is used to disable users in MicroStrategy and clean up their usage in specific groups. The process will disable the user, place the user in the _DISABLED_USERS group and then remove them from all other groups that they belong to with the exception of the Everyone and LDAP_USERS group. This procedure takes as input the user login that is being disabled as well as the ... </DESCRIPTION>
+<CODE>&#13;
+//*************************************************************************************&#13;
+//USER GROUPS TO EXCLUDE FROM REMOVAL PROCESS: Everyone, LDAP Users, _DISABLED_USERS&#13;
+//LOAD ARRAY LIST WITH GROUPS TO EXCLUDE FROM EXCLUSION&#13;
+ArrayList alUserGroupsExclude = new ArrayList();&#13;
+alUserGroupsExclude.add("Everyone");&#13;
+alUserGroupsExclude.add("LDAP Users");&#13;
+alUserGroupsExclude.add("_DISABLED_USERS");&#13;
+//*************************************************************************************&#13;
+&#13;
+//The followin statement is used to get a list of all of the user groups a user belongs to&#13;
+String sListUserProperties = "LIST ALL PROPERTIES FOR USER \"&lt;USER_LOGIN&gt;\";";&#13;
+&#13;
+//The followin statement is used to get a list of all of the user groups a user belongs to&#13;
+String sDisableUser = "ALTER USER  \"&lt;USER_LOGIN&gt;\" DISABLED;";&#13;
+&#13;
+//The following statement is used to remove users from the groups the belong to&#13;
+String sRemoveUserFromGroup = "REMOVE USER \"&lt;USER_LOGIN&gt;\" FROM GROUP \"&lt;USER_GROUP&gt;\";";&#13;
+&#13;
+//The following statement is used to add users to the DISABLED USER group&#13;
+String sAddUserToGroup = "ADD USER \"&lt;USER_LOGIN&gt;\" TO GROUP \"_DISABLED_USERS\";";&#13;
+&#13;
+//*************************************************************************************&#13;
+//DISABLE USER AND ADD USER TO _DISABLED_USERS GROUP                   					&#13;
+//*************************************************************************************&#13;
+&#13;
+&#13;
+//Replace place holder with UserLogin input string&#13;
+String sDisableUserNew = sDisableUser.replace("&lt;USER_LOGIN&gt;", sUserLogin);&#13;
+printOut(sDisableUserNew);&#13;
+execute (sDisableUserNew);&#13;
+&#13;
+//Replace place holder with UserLogin input string&#13;
+String sAddUserToGroupNew = sAddUserToGroup.replace("&lt;USER_LOGIN&gt;", sUserLogin);&#13;
+printOut(sAddUserToGroupNew);&#13;
+execute (sAddUserToGroupNew);&#13;
+&#13;
+//*************************************************************************************&#13;
+//LOAD ALL USER GROUPS THAT USER BELONGS TO INTO ARRAYLIST, EXCLUDE SPECIFIC GROUPS&#13;
+//*************************************************************************************&#13;
+//Define an arraylist and load user groups&#13;
+ArrayList alUserGroups = new ArrayList();&#13;
+try {&#13;
+	//Replace place holder with UserLogin input string&#13;
+	String sListUserPropertiesNew = sListUserProperties.replace("&lt;USER_LOGIN&gt;", sUserLogin);&#13;
+	//Capture resultset of user groups returned&#13;
+	ResultSet oResultSetMembers = executeCapture(sListUserPropertiesNew);&#13;
+	oResultSetMembers.moveFirst();&#13;
+	while (!oResultSetMembers.isEof()) {&#13;
+		//Populate resultset object with results&#13;
+		ResultSet oMemberDetail = (ResultSet) oResultSetMembers.getFieldValue(DisplayPropertyEnum.USER_GROUP_RESULTSET);&#13;
+		//Loop through all users and populate an array&#13;
+		oMemberDetail.moveFirst();&#13;
+		while (!oMemberDetail.isEof()) {&#13;
+			//String sLogin = oMemberDetail.getFieldValueString(LOGIN).toUpperCase();&#13;
+			String sUserGroup = oMemberDetail.getFieldValueString(USER_GROUP);&#13;
+			&#13;
+			if (!alUserGroupsExclude.contains(sUserGroup)){ //ONLY ADD USER GROUPS THAT DO NOT MEET EXCLUSION LIST&#13;
+				//Add user to array&#13;
+				alUserGroups.add(sUserGroup);&#13;
+				//printOut(sUserGroup);&#13;
+				}&#13;
+			oMemberDetail.moveNext();&#13;
+		}&#13;
+		oResultSetMembers.moveNext();&#13;
+	}&#13;
+} catch (Exception e) {&#13;
+	printErr(e.getMessage());&#13;
+}&#13;
+//*************************************************************************************&#13;
+//REMOVE USER FROM GROUPS NOT IN EXCLUSION LIST        					&#13;
+//*************************************************************************************&#13;
+&#13;
+//CHECK IF THERE ARE NO GROUPS IN ARRAY&#13;
+if (alUserGroups.size() &gt; 0){&#13;
+&#13;
+	try {	&#13;
+		Iterator alUserGroupsItr = alUserGroups.iterator();&#13;
+&#13;
+		while (alUserGroupsItr.hasNext()) {&#13;
+	&#13;
+			String sUserGroups = (String) alUserGroupsItr.next();&#13;
+&#13;
+			//Replace place holder with UserLogin input string&#13;
+			String sRemoveUserFromGroupNew = sRemoveUserFromGroup.replace("&lt;USER_LOGIN&gt;", sUserLogin);&#13;
+				sRemoveUserFromGroupNew = sRemoveUserFromGroupNew.replace("&lt;USER_GROUP&gt;", sUserGroups);&#13;
+&#13;
+			//Execute Remove user from Group script&#13;
+			execute(sRemoveUserFromGroupNew);&#13;
+			//printOut(sRemoveUserFromGroupNew);&#13;
+		}&#13;
+	} catch (Exception e) {&#13;
+		printErr(e.getMessage());&#13;
+				}&#13;
+	}&#13;
+else {&#13;
+printOut("NO USER GROUPS TO REMOVE FOR USER");&#13;
+}&#13;
+&#13;
+&#13;
+</CODE>
+<SAMPLE/>
+<VERSION>1.0</VERSION>
+<TYPE>CUSTOM</TYPE>
+<INPUT_PARAMS>
+<INPUT INPUT_TYPE="STRING">sUserLogin</INPUT>
+</INPUT_PARAMS>
+<CLASSPATH/>
+<TEST_INPUT>
+<TEST_INPUT_PARAM/>
+</TEST_INPUT>
+<TEST_CONNECTION_INFO>
+<TEST_PSN_NAME>PRDSOURCE</TEST_PSN_NAME>
+<TEST_USERNAME>administrator</TEST_USERNAME>
+<TEST_PASSWORD></TEST_PASSWORD>
+</TEST_CONNECTION_INFO>
+</PROCEDURE_DEFINITION>
